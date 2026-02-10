@@ -1,0 +1,360 @@
+package ui
+
+import (
+	"fmt"
+	"go-ssh/config"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// Colors
+var (
+	primaryColor   = lipgloss.Color("#7C3AED")
+	secondaryColor = lipgloss.Color("#10B981")
+	accentColor    = lipgloss.Color("#F59E0B")
+	dimColor       = lipgloss.Color("#6B7280")
+	borderColor    = lipgloss.Color("#4B5563")
+)
+
+// Styles
+var (
+	headerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(primaryColor).
+			Padding(1, 2).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderTop(true).
+			BorderBottom(true).
+			BorderForeground(borderColor)
+
+	footerStyle = lipgloss.NewStyle().
+			Foreground(dimColor).
+			Padding(1, 2).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderTop(true).
+			BorderForeground(borderColor)
+
+	treeStyle = lipgloss.NewStyle().
+			Padding(1, 2)
+
+	selectedStyle = lipgloss.NewStyle().
+			Bold(true).
+			Reverse(true)
+
+	categoryStyle = lipgloss.NewStyle().
+			Foreground(accentColor)
+
+	hostStyle = lipgloss.NewStyle().
+			Foreground(secondaryColor)
+
+	descStyle = lipgloss.NewStyle().
+			Foreground(dimColor).
+			Italic(true)
+
+	detailBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(borderColor).
+			Padding(1, 2).
+			Margin(1, 2)
+
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(primaryColor)
+)
+
+type model struct {
+	roots        []*config.TreeNode
+	visible      []*config.TreeNode
+	cursor       int
+	width        int
+	height       int
+	selectedHost *config.TreeNode
+	quitting     bool
+}
+
+func initialModel(cfg *config.Config) model {
+	roots := config.BuildTree(cfg)
+	// Expand first level by default
+	for _, root := range roots {
+		root.IsExpanded = true
+	}
+	visible := config.GetVisibleNodes(roots)
+
+	return model{
+		roots:   roots,
+		visible: visible,
+		cursor:  0,
+	}
+}
+
+func (m model) Init() tea.Cmd {
+	return nil
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+
+		case "down", "j":
+			if m.cursor < len(m.visible)-1 {
+				m.cursor++
+			}
+
+		case "left", "h":
+			if m.cursor < len(m.visible) {
+				node := m.visible[m.cursor]
+				if node.IsCategory && node.IsExpanded {
+					node.IsExpanded = false
+					m.visible = config.GetVisibleNodes(m.roots)
+				} else if node.Parent != nil {
+					// Go to parent
+					for i, n := range m.visible {
+						if n == node.Parent {
+							m.cursor = i
+							break
+						}
+					}
+				}
+			}
+
+		case "right", "l":
+			if m.cursor < len(m.visible) {
+				node := m.visible[m.cursor]
+				if node.IsCategory && !node.IsExpanded {
+					node.IsExpanded = true
+					m.visible = config.GetVisibleNodes(m.roots)
+				}
+			}
+
+		case "enter", " ":
+			if m.cursor < len(m.visible) {
+				node := m.visible[m.cursor]
+				if node.IsCategory {
+					node.IsExpanded = !node.IsExpanded
+					m.visible = config.GetVisibleNodes(m.roots)
+				} else {
+					m.selectedHost = node
+					return m, tea.Quit
+				}
+			}
+
+		case "e":
+			// Expand all
+			expandAll(m.roots, true)
+			m.visible = config.GetVisibleNodes(m.roots)
+
+		case "c":
+			// Collapse all
+			expandAll(m.roots, false)
+			m.visible = config.GetVisibleNodes(m.roots)
+		}
+	}
+
+	return m, nil
+}
+
+func expandAll(nodes []*config.TreeNode, expand bool) {
+	for _, node := range nodes {
+		if node.IsCategory {
+			node.IsExpanded = expand
+			expandAll(node.Children, expand)
+		}
+	}
+}
+
+func (m model) View() string {
+	if m.quitting {
+		return ""
+	}
+
+	if m.width == 0 || m.height == 0 {
+		return "Initializing..."
+	}
+
+	// Header
+	headerText := fmt.Sprintf("SSH Host Manager%sHosts: %d",
+		strings.Repeat(" ", max(0, m.width-35)),
+		countHosts(m.roots))
+	header := headerStyle.Width(m.width).Render(headerText)
+
+	// Footer
+	footer := footerStyle.Width(m.width).Render(
+		"↑↓/jk: Navigate  ←→/hl: Collapse/Expand  Enter: Select  e: Expand All  c: Collapse All  q: Quit",
+	)
+
+	// Detail box
+	detail := m.renderDetail()
+
+	// Calculate available height for tree
+	headerHeight := lipgloss.Height(header)
+	footerHeight := lipgloss.Height(footer)
+	detailHeight := lipgloss.Height(detail)
+	treeHeight := max(5, m.height-headerHeight-footerHeight-detailHeight-1)
+
+	// Tree view
+	var treeLines []string
+	startIdx := 0
+	endIdx := len(m.visible)
+
+	// Scroll if needed
+	if len(m.visible) > treeHeight {
+		if m.cursor >= treeHeight {
+			startIdx = m.cursor - treeHeight + 1
+		}
+		if startIdx+treeHeight < len(m.visible) {
+			endIdx = startIdx + treeHeight
+		} else {
+			endIdx = len(m.visible)
+		}
+	}
+
+	for i := startIdx; i < endIdx && i < len(m.visible); i++ {
+		node := m.visible[i]
+		line := m.renderNode(node, i == m.cursor)
+		treeLines = append(treeLines, line)
+	}
+
+	// Pad tree to fill space
+	for len(treeLines) < treeHeight {
+		treeLines = append(treeLines, "")
+	}
+
+	tree := treeStyle.Width(m.width).Height(treeHeight).Render(strings.Join(treeLines, "\n"))
+
+	// Combine all
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		header,
+		tree,
+		detail,
+		footer,
+	)
+}
+
+func (m model) renderNode(node *config.TreeNode, selected bool) string {
+	// Build indent
+	indent := strings.Repeat("  ", node.Level)
+
+	// Build prefix and name with style
+	var line string
+	if node.IsCategory {
+		if node.IsExpanded {
+			line = fmt.Sprintf("%s[-] %s", indent, categoryStyle.Render(node.Name))
+		} else {
+			line = fmt.Sprintf("%s[+] %s", indent, categoryStyle.Render(node.Name))
+		}
+	} else {
+		// Include prefix in styled name so selection highlights both
+		line = fmt.Sprintf("%s%s", indent, hostStyle.Render(" ● "+node.Name))
+	}
+
+	if selected {
+		return selectedStyle.Render("> " + line)
+	}
+
+	return "  " + line
+}
+
+func (m model) renderDetail() string {
+	if m.cursor >= len(m.visible) {
+		return ""
+	}
+
+	node := m.visible[m.cursor]
+
+	var content string
+	if node.IsCategory {
+		hostCount := countHostsInNode(node)
+		catCount := countCategoriesInNode(node)
+		content = fmt.Sprintf(
+			"%s\n%s\n\nContains: %d categories, %d hosts",
+			titleStyle.Render(node.Name),
+			descStyle.Render(node.Description),
+			catCount,
+			hostCount,
+		)
+	} else {
+		content = fmt.Sprintf(
+			"%s\n%s",
+			titleStyle.Render(node.Name),
+			descStyle.Render(node.Description),
+		)
+	}
+
+	return detailBoxStyle.Width(m.width - 6).Render(content)
+}
+
+func countHosts(nodes []*config.TreeNode) int {
+	count := 0
+	for _, node := range nodes {
+		count += countHostsInNode(node)
+	}
+	return count
+}
+
+func countHostsInNode(node *config.TreeNode) int {
+	if !node.IsCategory {
+		return 1
+	}
+	count := 0
+	for _, child := range node.Children {
+		count += countHostsInNode(child)
+	}
+	return count
+}
+
+func countCategoriesInNode(node *config.TreeNode) int {
+	if !node.IsCategory {
+		return 0
+	}
+	count := 0
+	for _, child := range node.Children {
+		if child.IsCategory {
+			count++
+			count += countCategoriesInNode(child)
+		}
+	}
+	return count
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// Run starts the TUI and returns the selected host command
+func Run(cfg *config.Config) (*config.Host, error) {
+	m := initialModel(cfg)
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if err != nil {
+		return nil, fmt.Errorf("error running program: %w", err)
+	}
+
+	if fm, ok := finalModel.(model); ok {
+		if fm.selectedHost != nil {
+			return fm.selectedHost.ToHost(), nil
+		}
+	}
+
+	return nil, nil
+}
