@@ -1,58 +1,62 @@
+go install
+go-ssh
 # Go SSH Host Manager
 
-SSH hostlarını ağaç yapısında yönetmek ve bağlanmak için tam ekran CLI grafik arayüzlü Go uygulaması.
+A full-screen TUI (terminal UI) application written in Go for organizing SSH hosts in a tree structure and connecting to them quickly.
 
-## Özellikler
+## Features
 
-- 🎨 Tam ekran terminal arayüzü (TUI)
-- 🌳 Ağaç yapısında kategori ve host organizasyonu
-- 📁 İç içe kategoriler desteği
-- ⌨️  Ok tuşları ile navigasyon
-- 🔗 Çoklu host üzerinden SSH bağlantısı
-- � Sıralı komut çalıştırma (karmaşık bağlantı senaryoları için)- 🤖 Interactive mode - Otomatik şifre girme ve komut gönderme- �📝 YAML tabanlı konfigürasyon
-- 🏠 Kullanıcı dizininde otomatik config yönetimi
+- 🎨 Full-screen terminal user interface (TUI)
+- 🌳 Tree-based category and host organization
+- 📁 Nested categories support
+- ⌨️ Keyboard navigation with arrow keys or Vim-style keys
+- 🔗 SSH connections via multiple hosts (jump hosts)
+- 📜 Sequential command execution for complex connection scenarios
+- 🤖 Interactive mode for automatic password entry and command sending
+- 📝 YAML-based configuration
+- 🏠 Automatic config management under the user home directory
 
-## Kurulum
+## Installation
 
 ```bash
 go build -o go-ssh
 sudo mv go-ssh /usr/local/bin/
 ```
 
-veya
+or:
 
 ```bash
 go install
 ```
 
-## Kullanım
+## Usage
 
-Uygulamayı çalıştırın:
+Run the application:
 
 ```bash
-go-ssh
+
 ```
 
-İlk çalıştırmada otomatik olarak `~/.go-ssh/config.yaml` dosyası oluşturulacaktır.
+On first run, the config file `~/.go-ssh/config.yaml` will be created automatically.
 
-### Klavye Kısayolları
+### Keyboard Shortcuts
 
-| Tuş | Açıklama |
-|-----|----------|
-| `↑/↓` veya `j/k` | Yukarı/Aşağı navigasyon |
-| `←/→` veya `h/l` | Kategori kapat/aç |
-| `Enter` veya `Space` | Kategori aç/kapat veya hosta bağlan |
-| `e` | Tüm kategorileri genişlet |
-| `c` | Tüm kategorileri daralt |
-| `q` veya `Ctrl+C` | Çıkış |
+| Key              | Action                            |
+|------------------|-----------------------------------|
+| `↑/↓` or `j/k`   | Navigate up/down                  |
+| `←/→` or `h/l`   | Collapse/expand category          |
+| `Enter` or `Space` | Open/close category or connect to host |
+| `e`              | Expand all categories             |
+| `c`              | Collapse all categories           |
+| `q` or `Ctrl+C`  | Quit                              |
 
-## Konfigürasyon
+## Configuration
 
-Config dosyası: `~/.go-ssh/config.yaml`
+Config file path: `~/.go-ssh/config.yaml`
 
-### Ağaç Yapısı
+### Tree Structure
 
-Kategoriler iç içe geçebilir ve her kategori hem alt kategoriler hem de hostlar içerebilir:
+Categories can be nested. Each category can contain both subcategories and hosts:
 
 ```yaml
 categories:
@@ -107,26 +111,26 @@ categories:
         command: ssh dev@devserver
 ```
 
-### Config Yapısı
+### Config Schema
 
-**Kategori:**
-- `name`: Kategori adı
-- `description`: Açıklama (opsiyonel)
-- `icon`: Emoji ikon (opsiyonel)
-- `categories`: Alt kategoriler (opsiyonel)
-- `hosts`: Hostlar (opsiyonel)
+**Category:**
+- `name`: Category name
+- `description`: Description (optional)
+- `icon`: Emoji icon (optional)
+- `categories`: Subcategories (optional)
+- `hosts`: Hosts (optional)
 
 **Host:**
-- `name`: Host'un görünen adı
-- `description`: Host açıklaması (opsiyonel)
-- `command`: Çalıştırılacak tek SSH komutu (basit bağlantılar için)
-- `commands`: Sırayla çalıştırılacak komutlar listesi (karmaşık bağlantılar için)
+- `name`: Display name of the host
+- `description`: Host description (optional)
+- `command`: Single SSH command to run (for simple connections)
+- `commands`: List of commands to run sequentially (for complex connections)
 
-> **Not:** Bir host için ya `command` ya da `commands` kullanılmalıdır, ikisi birden kullanılamaz.
+> **Note:** For a host you should use either `command` **or** `commands`, not both.
 
-### Basit Bağlantı Örneği
+### Simple Connection Example
 
-Tek bir komutla doğrudan bağlantı:
+Direct connection with a single command:
 
 ```yaml
 hosts:
@@ -135,18 +139,18 @@ hosts:
     command: ssh user@production.example.com
 ```
 
-### Karmaşık Bağlantı Örneği (Sıralı Komutlar)
+### Complex Connection Example (Sequential Commands)
 
-Jump host üzerinden veya çoklu adımlı bağlantılar için:
+For multi-hop connections or jump hosts:
 
 ```yaml
 hosts:
   - name: Inner Server
     description: Server behind jump host
     commands:
-      - ssh jumphost@bastion.example.com   # İlk önce bastion'a bağlan
-      - sleep 2                             # Bağlantının kurulmasını bekle
-      - ssh user@internal-server            # Oradan iç sunucuya bağlan
+      - ssh jumphost@bastion.example.com   # Connect to bastion first
+      - sleep 2                             # Wait for connection to establish
+      - ssh user@internal-server            # Then connect to internal server
 
   - name: Complex Setup
     description: Multi-step connection
@@ -157,49 +161,49 @@ hosts:
       - ssh -t jump@gateway "ssh app@prod-server"
 ```
 
-**Sıralı Komutlar Nasıl Çalışır:**
-- İlk SSH komutu bulunur ve ona `-tt` flag'i eklenir (terminal allocation için)
-- Diğer tüm komutlar, ilk SSH bağlantısı içinde çalıştırılacak remote komutlar olarak embed edilir
-- Son komut SSH ise, `exec` ile çalıştırılarak kullanıcı doğrudan o session'a bağlanır
-- Örnek: `["ssh host1", "sleep 2", "ssh host2"]` → `ssh -tt host1 'sleep 2; exec ssh host2'`
+**How Sequential Commands Work:**
+- The first SSH command is detected and extended with `-tt` (for terminal allocation).
+- All subsequent commands are embedded as remote commands executed within the first SSH session.
+- If the last command is an SSH command, it is run via `exec` so that the user is attached directly to that session.
+- Example: `["ssh host1", "sleep 2", "ssh host2"]` → `ssh -tt host1 'sleep 2; exec ssh host2'`
 
-**Örnek Dönüşüm:**
+**Example Transformation:**
 ```yaml
 commands:
   - ssh jumphost@bastion
   - sleep 2
   - ssh user@internal-server
 ```
-Bu otomatik olarak şuna dönüştürülür:
+Automatically becomes:
 ```bash
 ssh -tt jumphost@bastion 'sleep 2; exec ssh user@internal-server'
 ```
 
-### Interactive Mode (Otomatik Şifre/Komut Girişi)
+### Interactive Mode (Automatic Password/Command Input)
 
-Interactive mode, Go uygulamasının SSH bağlantısını PTY (pseudo-terminal) ile yönetmesini sağlar. Bu sayede:
-- Otomatik şifre girebilirsiniz
-- Bağlantı kurulduktan sonra otomatik komutlar gönderebilirsiniz
-- Son olarak kullanıcıya kontrolü verebilirsiniz
+Interactive mode lets the Go app control the SSH connection via a PTY (pseudo-terminal). This allows you to:
+- Automatically enter passwords
+- Send commands after the connection is established
+- Finally hand control back to the user
 
-**Özel Komut Prefixleri:**
-- `SEND:text` - Terminal'e text gönderir (enter ile)
-- `WAIT:N` - N saniye bekler
-- `INTERACT` - Kullanıcıya kontrolü verir
+**Special Command Prefixes:**
+- `SEND:text` – Send text to the terminal (followed by Enter)
+- `WAIT:N` – Wait N seconds
+- `INTERACT` – Give control back to the user
 
-**Örnek 1: Şifre ile Bağlantı**
+**Example 1: Login with Password**
 ```yaml
 hosts:
   - name: Server with Password
     description: Auto-login with password
     commands:
-      - ssh user@server.com          # SSH başlat
-      - WAIT:2                        # Şifre promptu için bekle
-      - SEND:mypassword123            # Şifreyi gönder
-      - INTERACT                      # Kullanıcıya kontrolü ver
+      - ssh user@server.com          # Start SSH
+      - WAIT:2                       # Wait for password prompt
+      - SEND:mypassword123           # Send password
+      - INTERACT                     # Hand control to user
 ```
 
-**Örnek 2: Şifre + Otomatik Komutlar**
+**Example 2: Password + Automatic Commands**
 ```yaml
 hosts:
   - name: Auto Setup Server
@@ -207,14 +211,14 @@ hosts:
     commands:
       - ssh user@server.com
       - WAIT:2
-      - SEND:mypassword                # Şifre gönder
-      - WAIT:1                         # Prompt için bekle
-      - SEND:cd /opt/app               # Dizine geç
-      - SEND:./setup.sh                # Script çalıştır
-      - INTERACT                       # Kullanıcı devam etsin
+      - SEND:mypassword              # Send password
+      - WAIT:1                       # Wait for shell prompt
+      - SEND:cd /opt/app             # Change directory
+      - SEND:./setup.sh              # Run script
+      - INTERACT                     # User continues
 ```
 
-**Örnek 3: Jump Host ile Karmaşık Senaryo**
+**Example 3: Complex Scenario with Jump Host and Passwords**
 ```yaml
 hosts:
   - name: Multi-Hop with Passwords
@@ -232,32 +236,32 @@ hosts:
 
 ## 🔐 Password Manager
 
-Go-SSH, şifrelerinizi güvenli bir şekilde saklamak için yerleşik bir password manager içerir. Şifreler AES-256-GCM encryption ile şifrelenir ve disk'te güvenli bir şekilde saklanır.
+Go-SSH includes a built-in password manager to store your passwords securely. Passwords are encrypted with AES-256-GCM and stored safely on disk.
 
-### Password Manager'ı Kullanma
+### Using the Password Manager
 
-Password manager'ı başlatmak için:
+Start the password manager with:
 
 ```bash
 ./go-ssh --passwords
 ```
 
-İlk çalıştırmada master password oluşturmanız istenecektir. Bu password, tüm kayıtlı şifrelerinizi koruyacaktır.
+On first run, you will be asked to create a master password. This master password protects all stored secrets.
 
-### Menü Seçenekleri
+### Menu Options
 
-1. **Add Password**: Yeni şifre ekle
-   - ID: Şifreyi tanımlayan benzersiz bir kod (örn: `prod-db`, `staging-app`)
-   - Description: Şifre hakkında açıklama
-   - Password: Saklanacak şifre
+1. **Add Password** – Add a new password
+   - ID: Unique identifier for the secret (e.g. `prod-db`, `staging-app`)
+   - Description: Description for the secret
+   - Password: The password to store
 
-2. **List Passwords**: Kayıtlı şifreleri listele
+2. **List Passwords** – List stored passwords (IDs and descriptions)
 
-3. **Remove Password**: Şifre sil
+3. **Remove Password** – Delete a stored password
 
-### Config'de SENDPASS Kullanma
+### Using `SENDPASS` in Config
 
-Kayıtlı şifreleri SSH bağlantılarında kullanmak için `SENDPASS:password_id` komutunu kullanın:
+To use stored passwords in SSH connections, use the `SENDPASS:password_id` command:
 
 ```yaml
 categories:
@@ -267,32 +271,32 @@ categories:
         description: Production database with password
         commands:
           - ssh user@db-server.com
-          - SENDPASS:prod-db        # Password manager'dan şifreyi gönder
+          - SENDPASS:prod-db        # Send password from password manager
           - INTERACT
 ```
 
-### Güvenlik Özellikleri
+### Security Features
 
 - ✅ AES-256-GCM encryption
 - ✅ PBKDF2 key derivation (100,000 iterations)
-- ✅ Master password ile şifreleme
-- ✅ Disk'te sadece şifreli data
-- ✅ 0600 dosya izinleri (sadece owner okuyabilir)
-- ✅ Şifreler memory'de sadece gerektiğinde decrypt edilir
+- ✅ Encryption with a master password
+- ✅ Only encrypted data stored on disk
+- ✅ File permissions `0600` (owner read/write only)
+- ✅ Passwords are decrypted in memory only when needed
 
-### Örnek Workflow
+### Example Workflow
 
-1. Password manager'ı başlat:
+1. Start the password manager:
    ```bash
    ./go-ssh --passwords
    ```
 
-2. Yeni şifre ekle:
+2. Add a new password:
    - ID: `prod-web`
    - Description: `Production web server password`
    - Password: `<your-secure-password>`
 
-3. Config'de kullan:
+3. Use it in your config:
    ```yaml
    - name: Web Server
      commands:
@@ -301,16 +305,16 @@ categories:
        - INTERACT
    ```
 
-4. Normal şekilde go-ssh'i çalıştır:
+4. Run go-ssh as usual:
    ```bash
    ./go-ssh
    ```
 
-5. Host'u seç, master password gir, otomatik login!
+5. Select the host, enter your master password, and enjoy automatic login.
 
-**Güvenlik Notu:** Password manager AES-256 encryption kullanır ve güvenlidir. Ancak production ortamlarında mümkünse SSH key authentication kullanmanız önerilir. SEND komutu ile config dosyasında şifre saklamak güvenli değildir.
+**Security Note:** The password manager uses AES-256 encryption and is designed to be secure, but in production environments you should prefer SSH key authentication whenever possible. Storing plain passwords directly in the YAML config (e.g. via `SEND:`) is not recommended.
 
-## Ekran Görünümü
+## UI Preview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -334,26 +338,26 @@ categories:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Geliştirme
+## Development
 
-Projeyi çalıştırmak için:
+To run the project:
 
 ```bash
 go run main.go
 ```
 
-Build:
+To build:
 
 ```bash
 go build -o go-ssh
 ```
 
-## Bağımlılıklar
+## Dependencies
 
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
-- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Stil ve görünüm
-- [yaml.v3](https://gopkg.in/yaml.v3) - YAML parsing
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) – TUI framework
+- [Lipgloss](https://github.com/charmbracelet/lipgloss) – Styling and layout
+- [yaml.v3](https://gopkg.in/yaml.v3) – YAML parsing
 
-## Lisans
+## License
 
 MIT
