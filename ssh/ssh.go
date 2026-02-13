@@ -274,6 +274,7 @@ const (
 	CommandTypeSend                        // Send text to stdin (e.g., SEND:password)
 	CommandTypeSendPass                    // Send password from store (e.g., SENDPASS:id)
 	CommandTypeWait                        // Wait for duration (e.g., WAIT:2)
+	CommandTypeExpect                      // Wait for expected string in output (e.g., EXPECT:password:)
 	CommandTypeInteract                    // Give control to user (e.g., INTERACT)
 )
 
@@ -301,6 +302,11 @@ func ParseCommands(commands []string) []ParsedCommand {
 			parsed = append(parsed, ParsedCommand{
 				Type:  CommandTypeWait,
 				Value: strings.TrimPrefix(cmd, "WAIT:"),
+			})
+		} else if strings.HasPrefix(cmd, "EXPECT:") {
+			parsed = append(parsed, ParsedCommand{
+				Type:  CommandTypeExpect,
+				Value: strings.TrimPrefix(cmd, "EXPECT:"),
 			})
 		} else if cmd == "INTERACT" || cmd == "INTERACTIVE" {
 			parsed = append(parsed, ParsedCommand{
@@ -414,7 +420,12 @@ func ConnectInteractive(commands []string) error {
 	// Create a filtered reader to remove terminal control sequences
 	filteredOutput := &TerminalFilter{Reader: ptmx}
 
+	// Create channels for output monitoring (for EXPECT command)
+	outputChan := make(chan string, 100)
+	outputBuffer := &strings.Builder{}
+
 	// Process automation commands
+	automationDone := make(chan bool)
 	go func() {
 		time.Sleep(500 * time.Millisecond) // Give initial command time to start
 
@@ -443,15 +454,44 @@ func ConnectInteractive(commands []string) error {
 				time.Sleep(100 * time.Millisecond)
 
 			case CommandTypeWait:
-				// Parse duration and wait
+				// Parse duration and wait with better error handling
 				var seconds int
-				fmt.Sscanf(pc.Value, "%d", &seconds)
+				n, err := fmt.Sscanf(pc.Value, "%d", &seconds)
+				if err != nil || n != 1 {
+					fmt.Fprintf(os.Stderr, "Warning: WAIT command failed to parse '%s', skipping\n", pc.Value)
+					continue
+				}
 				if seconds > 0 {
 					time.Sleep(time.Duration(seconds) * time.Second)
 				}
 
+			case CommandTypeExpect:
+				// Wait for expected string in output
+				expectedStr := pc.Value
+
+				timeout := time.After(30 * time.Second)
+				found := false
+
+				for !found {
+					select {
+					case output := <-outputChan:
+						if strings.Contains(output, expectedStr) {
+							found = true
+						}
+					case <-timeout:
+						fmt.Fprintf(os.Stderr, "Warning: EXPECT timeout after 30s waiting for '%s'\n", expectedStr)
+						found = true // Exit loop on timeout
+					case <-time.After(50 * time.Millisecond):
+						// Check accumulated buffer
+						if strings.Contains(outputBuffer.String(), expectedStr) {
+							found = true
+						}
+					}
+				}
+
 			case CommandTypeInteract:
 				// User interaction - copy stdin to pty
+				automationDone <- true
 				go io.Copy(ptmx, os.Stdin)
 				return
 
@@ -463,11 +503,41 @@ func ConnectInteractive(commands []string) error {
 		}
 
 		// After all automation, give control to user
+		automationDone <- true
 		io.Copy(ptmx, os.Stdin)
 	}()
 
-	// Copy output from pty to stdout (with filtering)
-	io.Copy(os.Stdout, filteredOutput)
+	// Copy output from pty to stdout (with filtering) and monitor for EXPECT
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := filteredOutput.Read(buf)
+			if n > 0 {
+				data := string(buf[:n])
+				os.Stdout.Write(buf[:n])
+
+				// Send to output channel for EXPECT monitoring
+				select {
+				case outputChan <- data:
+					outputBuffer.WriteString(data)
+					// Keep buffer size reasonable (last 10KB)
+					if outputBuffer.Len() > 10240 {
+						bufStr := outputBuffer.String()
+						outputBuffer.Reset()
+						outputBuffer.WriteString(bufStr[len(bufStr)-10240:])
+					}
+				default:
+					// Channel full, skip
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	// Wait for automation to complete
+	<-automationDone
 
 	// Wait for command to finish
 	if err := cmd.Wait(); err != nil {

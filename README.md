@@ -188,7 +188,9 @@ Interactive mode lets the Go app control the SSH connection via a PTY (pseudo-te
 
 **Special Command Prefixes:**
 - `SEND:text` – Send text to the terminal (followed by Enter)
-- `WAIT:N` – Wait N seconds
+- `SENDPASS:id` – Send password from password manager (followed by Enter)
+- `WAIT:N` – Wait N seconds (e.g., `WAIT:5` waits 5 seconds)
+- `EXPECT:text` – Wait until the specified text appears in output (30 second timeout)
 - `INTERACT` – Give control back to the user
 
 **Example 1: Login with Password**
@@ -198,41 +200,65 @@ hosts:
     description: Auto-login with password
     commands:
       - ssh user@server.com          # Start SSH
+      - WAIT:2                       # Wait 2 seconds for password prompt
+      - SEND:mypassword123           # Send password
+      - INTERACT                     # Hand control to user
+```
+
+**Example 2: Using EXPECT for Dynamic Prompts**
+```yaml
+hosts:
+  - name: Server with EXPECT
+    description: Wait for specific prompts instead of fixed delays
+    commands:
+      - ssh user@server.com          # Start SSH
+      - EXPECT:Password:             # Wait until "Password:" appears in output
+      - SEND:mypassword123           # Send password
+      - EXPECT:$                     # Wait until shell prompt appears
+      - SEND:cd /opt/app             # Change directory
+      - INTERACT                     # Hand control to user
+```
       - WAIT:2                       # Wait for password prompt
       - SEND:mypassword123           # Send password
       - INTERACT                     # Hand control to user
 ```
 
-**Example 2: Password + Automatic Commands**
+**Example 3: Password + Automatic Commands**
 ```yaml
 hosts:
   - name: Auto Setup Server
     description: Login and run setup commands
     commands:
       - ssh user@server.com
-      - WAIT:2
+      - EXPECT:Password:             # Wait for password prompt (better than fixed WAIT)
       - SEND:mypassword              # Send password
-      - WAIT:1                       # Wait for shell prompt
+      - EXPECT:$                     # Wait for shell prompt
       - SEND:cd /opt/app             # Change directory
       - SEND:./setup.sh              # Run script
       - INTERACT                     # User continues
 ```
 
-**Example 3: Complex Scenario with Jump Host and Passwords**
+**Example 4: Complex Scenario with Jump Host and Passwords**
 ```yaml
 hosts:
   - name: Multi-Hop with Passwords
     description: Jump through multiple hosts with passwords
     commands:
       - ssh jumphost@bastion.com
-      - WAIT:2
+      - EXPECT:Password:             # More reliable than WAIT:2
       - SEND:bastion_password
-      - WAIT:1
+      - EXPECT:$                     # Wait for shell prompt
       - SEND:ssh user@internal-server
-      - WAIT:2
+      - EXPECT:Password:
       - SEND:internal_password
       - INTERACT
 ```
+
+**EXPECT vs WAIT:**
+- `WAIT:N` – Waits for a fixed number of seconds. Simple but may wait too long or too short depending on network conditions.
+- `EXPECT:text` – Waits until specific text appears in the output (max 30 seconds). More reliable for dynamic scenarios like waiting for prompts.
+- Use `EXPECT` when you need to wait for specific output (like "Password:", prompt symbols "$" or "#")
+- Use `WAIT` for simple delays where timing is predictable
 
 ## 🔐 Password Manager
 

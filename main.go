@@ -72,7 +72,8 @@ func main() {
 	hasInteractive := false
 	for _, cmd := range commands {
 		if strings.HasPrefix(cmd, "SEND:") || strings.HasPrefix(cmd, "SENDPASS:") ||
-			strings.HasPrefix(cmd, "WAIT:") || cmd == "INTERACT" || cmd == "INTERACTIVE" {
+			strings.HasPrefix(cmd, "WAIT:") || strings.HasPrefix(cmd, "EXPECT:") ||
+			cmd == "INTERACT" || cmd == "INTERACTIVE" {
 			hasInteractive = true
 			break
 		}
