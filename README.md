@@ -34,7 +34,7 @@ go install
 Run the application:
 
 ```bash
-
+go-ssh
 ```
 
 On first run, the config file `~/.go-ssh/config.yaml` will be created automatically.
