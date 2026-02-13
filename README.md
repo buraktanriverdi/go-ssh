@@ -62,11 +62,9 @@ Categories can be nested. Each category can contain both subcategories and hosts
 categories:
   - name: Production
     description: Production environment servers
-    icon: "🔴"
     categories:
       - name: Web Servers
         description: Frontend web servers
-        icon: "🌐"
         hosts:
           - name: Web Server 1
             description: Primary web server
@@ -76,7 +74,6 @@ categories:
             command: ssh -t jumphost@bastion "ssh -t deploy@web2 'cd /var/www && exec bash'"
       - name: Database Servers
         description: Database servers
-        icon: "🗄️"
         hosts:
           - name: MySQL Master
             description: Primary MySQL server
@@ -88,7 +85,6 @@ categories:
 
   - name: Staging
     description: Staging environment
-    icon: "🟡"
     hosts:
       - name: Staging Server
         description: Staging environment server
@@ -96,11 +92,9 @@ categories:
 
   - name: Development
     description: Development servers
-    icon: "🟢"
     categories:
       - name: Local VMs
         description: Local virtual machines
-        icon: "💻"
         hosts:
           - name: Dev VM 1
             description: Development VM
