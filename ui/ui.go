@@ -23,7 +23,7 @@ var (
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(primaryColor).
-			Padding(1, 2).
+			Padding(0, 1).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderTop(true).
 			BorderBottom(true).
@@ -31,13 +31,13 @@ var (
 
 	footerStyle = lipgloss.NewStyle().
 			Foreground(dimColor).
-			Padding(1, 2).
+			Padding(0, 1).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderTop(true).
 			BorderForeground(borderColor)
 
 	treeStyle = lipgloss.NewStyle().
-			Padding(1, 2)
+			Padding(0, 1)
 
 	selectedStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -52,12 +52,6 @@ var (
 	descStyle = lipgloss.NewStyle().
 			Foreground(dimColor).
 			Italic(true)
-
-	detailBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(borderColor).
-			Padding(1, 2).
-			Margin(1, 2)
 
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -198,14 +192,10 @@ func (m model) View() string {
 		"↑↓/jk: Navigate  ←→/hl: Collapse/Expand  Enter: Select  e: Expand All  c: Collapse All  q: Quit",
 	)
 
-	// Detail box
-	detail := m.renderDetail()
-
 	// Calculate available height for tree
 	headerHeight := lipgloss.Height(header)
 	footerHeight := lipgloss.Height(footer)
-	detailHeight := lipgloss.Height(detail)
-	treeHeight := max(5, m.height-headerHeight-footerHeight-detailHeight-1)
+	treeHeight := max(5, m.height-headerHeight-footerHeight-1)
 
 	// Tree view
 	var treeLines []string
@@ -227,6 +217,16 @@ func (m model) View() string {
 	for i := startIdx; i < endIdx && i < len(m.visible); i++ {
 		node := m.visible[i]
 		line := m.renderNode(node, i == m.cursor)
+
+		// Add scroll indicator on the right if needed
+		if len(m.visible) > treeHeight {
+			relativePos := i - startIdx
+			scrollIndicator := m.getScrollIndicator(relativePos, startIdx, endIdx, treeHeight)
+			// Pad line to full width minus scroll bar space (account for treeStyle padding and scrollbar)
+			paddedLine := lipgloss.NewStyle().Width(m.width - 6).Render(line)
+			line = lipgloss.JoinHorizontal(lipgloss.Left, paddedLine, scrollIndicator)
+		}
+
 		treeLines = append(treeLines, line)
 	}
 
@@ -242,7 +242,6 @@ func (m model) View() string {
 		lipgloss.Left,
 		header,
 		tree,
-		detail,
 		footer,
 	)
 }
@@ -271,33 +270,46 @@ func (m model) renderNode(node *config.TreeNode, selected bool) string {
 	return "  " + line
 }
 
-func (m model) renderDetail() string {
-	if m.cursor >= len(m.visible) {
-		return ""
+func (m model) getScrollIndicator(relativePos, startIdx, endIdx, treeHeight int) string {
+	totalVisible := len(m.visible)
+
+	// Calculate scroll thumb position and size
+	// Thumb size should represent the proportion of visible items
+	thumbSize := max(1, (treeHeight*treeHeight+totalVisible-1)/totalVisible)
+
+	// Calculate thumb position based on scroll percentage
+	scrollPercentage := float64(startIdx) / float64(max(1, totalVisible-treeHeight))
+	thumbStart := int(scrollPercentage * float64(treeHeight-thumbSize))
+	thumbEnd := thumbStart + thumbSize
+
+	// Ensure thumb doesn't go out of bounds
+	if thumbEnd > treeHeight {
+		thumbEnd = treeHeight
+		thumbStart = treeHeight - thumbSize
 	}
 
-	node := m.visible[m.cursor]
+	// Determine scroll indicator character for this line
+	var indicator string
 
-	var content string
-	if node.IsCategory {
-		hostCount := countHostsInNode(node)
-		catCount := countCategoriesInNode(node)
-		content = fmt.Sprintf(
-			"%s\n%s\n\nContains: %d categories, %d hosts",
-			titleStyle.Render(node.Name),
-			descStyle.Render(node.Description),
-			catCount,
-			hostCount,
-		)
+	// Check if this line is within the thumb range
+	if relativePos >= thumbStart && relativePos < thumbEnd {
+		indicator = "█"
+	} else if relativePos == 0 && startIdx > 0 {
+		// First line with content above
+		indicator = "▲"
+	} else if relativePos == treeHeight-1 && endIdx < totalVisible {
+		// Last line with content below
+		indicator = "▼"
 	} else {
-		content = fmt.Sprintf(
-			"%s\n%s",
-			titleStyle.Render(node.Name),
-			descStyle.Render(node.Description),
-		)
+		// Track line
+		indicator = "│"
 	}
 
-	return detailBoxStyle.Width(m.width - 6).Render(content)
+	return lipgloss.NewStyle().
+		Foreground(dimColor).
+		Width(2).
+		Align(lipgloss.Right).
+		Render(indicator)
 }
 
 func countHosts(nodes []*config.TreeNode) int {
@@ -331,13 +343,6 @@ func countCategoriesInNode(node *config.TreeNode) int {
 		}
 	}
 	return count
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // Run starts the TUI and returns the selected host command
