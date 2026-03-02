@@ -12,7 +12,7 @@ import (
 type passwordManagerModel struct {
 	store           *password.PasswordStore
 	masterPwd       string
-	mode            string // "menu", "add", "list", "remove", "view", "change-master"
+	mode            string // "menu", "add", "list", "remove", "view", "edit", "change-master"
 	entries         []*password.PasswordEntry
 	cursor          int
 	width           int
@@ -23,12 +23,13 @@ type passwordManagerModel struct {
 	inputOldPwd     string
 	inputNewPwd     string
 	inputConfirmPwd string
-	inputField      int // 0=id, 1=desc, 2=pwd (for add), 0=old, 1=new, 2=confirm (for change-master)
+	inputField      int // 0=id, 1=desc, 2=pwd (for add/edit), 0=old, 1=new, 2=confirm (for change-master)
 	message         string
 	messageType     string // "success", "error", "info"
 	quitting        bool
 	passwordAdded   bool
 	viewingPassword string
+	editingID       string // ID of the password being edited
 }
 
 func initialPasswordManagerModel(store *password.PasswordStore, masterPwd string) passwordManagerModel {
@@ -52,6 +53,33 @@ func (m passwordManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle paste through KeyMsg with PasteEvent type
+		if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+			// This is likely a paste operation with multiple characters
+			pastedText := string(msg.Runes)
+			switch m.mode {
+			case "add", "edit":
+				switch m.inputField {
+				case 0:
+					m.inputID += pastedText
+				case 1:
+					m.inputDesc += pastedText
+				case 2:
+					m.inputPwd += pastedText
+				}
+			case "change-master":
+				switch m.inputField {
+				case 0:
+					m.inputOldPwd += pastedText
+				case 1:
+					m.inputNewPwd += pastedText
+				case 2:
+					m.inputConfirmPwd += pastedText
+				}
+			}
+			return m, nil
+		}
+
 		switch m.mode {
 		case "menu":
 			return m.updateMenu(msg)
@@ -63,6 +91,8 @@ func (m passwordManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRemove(msg)
 		case "view":
 			return m.updateView(msg)
+		case "edit":
+			return m.updateEdit(msg)
 		case "change-master":
 			return m.updateChangeMaster(msg)
 		}
@@ -83,7 +113,7 @@ func (m passwordManagerModel) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down", "j":
-		if m.cursor < 5 {
+		if m.cursor < 6 {
 			m.cursor++
 		}
 
@@ -102,24 +132,33 @@ func (m passwordManagerModel) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.message = ""
 			m.viewingPassword = ""
-		case 2: // List passwords
+		case 2: // Edit password
+			m.mode = "edit"
+			m.entries = m.store.List()
+			m.cursor = 0
+			m.message = ""
+			m.editingID = ""
+			m.inputDesc = ""
+			m.inputPwd = ""
+			m.inputField = 0
+		case 3: // List passwords
 			m.mode = "list"
 			m.entries = m.store.List()
 			m.cursor = 0
 			m.message = ""
-		case 3: // Remove password
+		case 4: // Remove password
 			m.mode = "remove"
 			m.entries = m.store.List()
 			m.cursor = 0
 			m.message = ""
-		case 4: // Change master password
+		case 5: // Change master password
 			m.mode = "change-master"
 			m.inputOldPwd = ""
 			m.inputNewPwd = ""
 			m.inputConfirmPwd = ""
 			m.inputField = 0
 			m.message = ""
-		case 5: // Exit
+		case 6: // Exit
 			m.quitting = true
 			return m, tea.Quit
 		}
@@ -400,6 +439,120 @@ func (m passwordManagerModel) updateChangeMaster(msg tea.KeyMsg) (tea.Model, tea
 	return m, nil
 }
 
+func (m passwordManagerModel) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// If we haven't selected a password to edit yet
+	if m.editingID == "" {
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "esc", "q":
+			m.mode = "menu"
+			m.cursor = 0
+			m.message = ""
+			return m, nil
+
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+
+		case "down", "j":
+			if m.cursor < len(m.entries)-1 {
+				m.cursor++
+			}
+
+		case "enter", " ":
+			if len(m.entries) > 0 && m.cursor < len(m.entries) {
+				// Selected password to edit
+				entry := m.entries[m.cursor]
+				m.editingID = entry.ID
+
+				// Load current values
+				actualEntry, err := m.store.GetEntry(entry.ID)
+				if err != nil {
+					m.message = fmt.Sprintf("Error: %v", err)
+					m.messageType = "error"
+				} else {
+					m.inputDesc = actualEntry.Description
+					m.inputPwd = actualEntry.Password
+					m.inputField = 0
+				}
+			}
+		}
+	} else {
+		// We're now editing the password
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "esc":
+			// Cancel editing
+			m.editingID = ""
+			m.inputDesc = ""
+			m.inputPwd = ""
+			m.inputField = 0
+			m.message = ""
+			return m, nil
+
+		case "tab", "down":
+			m.inputField = (m.inputField + 1) % 2
+
+		case "shift+tab", "up":
+			m.inputField = (m.inputField - 1 + 2) % 2
+
+		case "enter":
+			if m.inputField == 1 && m.inputPwd != "" {
+				// Save updated password
+				if err := m.store.Update(m.editingID, m.inputDesc, m.inputPwd); err != nil {
+					m.message = fmt.Sprintf("Error: %v", err)
+					m.messageType = "error"
+				} else {
+					if err := m.store.Save(m.masterPwd, nil); err != nil {
+						m.message = fmt.Sprintf("Error saving: %v", err)
+						m.messageType = "error"
+					} else {
+						m.message = fmt.Sprintf("Password '%s' updated successfully!", m.editingID)
+						m.messageType = "success"
+						m.editingID = ""
+						m.inputDesc = ""
+						m.inputPwd = ""
+						m.inputField = 0
+						m.entries = m.store.List()
+					}
+				}
+			}
+
+		case "backspace":
+			switch m.inputField {
+			case 0:
+				if len(m.inputDesc) > 0 {
+					m.inputDesc = m.inputDesc[:len(m.inputDesc)-1]
+				}
+			case 1:
+				if len(m.inputPwd) > 0 {
+					m.inputPwd = m.inputPwd[:len(m.inputPwd)-1]
+				}
+			}
+
+		default:
+			// Add character to current field
+			if len(msg.String()) == 1 {
+				switch m.inputField {
+				case 0:
+					m.inputDesc += msg.String()
+				case 1:
+					m.inputPwd += msg.String()
+				}
+			}
+		}
+	}
+
+	return m, nil
+}
+
 func (m passwordManagerModel) View() string {
 	if m.quitting {
 		return ""
@@ -420,6 +573,8 @@ func (m passwordManagerModel) View() string {
 		return m.viewRemove()
 	case "view":
 		return m.viewView()
+	case "edit":
+		return m.viewEdit()
 	case "change-master":
 		return m.viewChangeMaster()
 	}
@@ -445,6 +600,7 @@ func (m passwordManagerModel) viewMenu() string {
 	menuItems := []string{
 		"Add Password",
 		"View Password",
+		"Edit Password",
 		"List Passwords",
 		"Remove Password",
 		"Change Master Password",
@@ -788,6 +944,122 @@ func (m passwordManagerModel) viewChangeMaster() string {
 	}
 
 	footer := footerStyle.Width(m.width).Render("Tab: Next Field  Enter: Change  Esc: Back")
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		header,
+		form,
+		messageView,
+		footer,
+	)
+}
+
+func (m passwordManagerModel) viewEdit() string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(primaryColor).
+		Padding(1, 2)
+
+	// If we haven't selected a password yet, show list
+	if m.editingID == "" {
+		header := titleStyle.Render("Edit Password - Select Entry")
+
+		listStyle := lipgloss.NewStyle().
+			Padding(1, 2)
+
+		if len(m.entries) == 0 {
+			emptyStyle := lipgloss.NewStyle().
+				Foreground(dimColor).
+				Italic(true)
+			empty := listStyle.Render(emptyStyle.Render("No passwords stored yet"))
+			footer := footerStyle.Width(m.width).Render("Esc: Back")
+			return lipgloss.JoinVertical(lipgloss.Left, header, empty, footer)
+		}
+
+		var listLines []string
+		for i, entry := range m.entries {
+			line := fmt.Sprintf("%-20s %s", entry.ID, entry.Description)
+			if i == m.cursor {
+				listLines = append(listLines, selectedStyle.Render("> "+line))
+			} else {
+				listLines = append(listLines, "  "+line)
+			}
+		}
+
+		list := listStyle.Render(strings.Join(listLines, "\n"))
+
+		messageView := ""
+		if m.message != "" {
+			msgStyle := lipgloss.NewStyle().
+				Padding(1, 2).
+				Bold(true)
+
+			if m.messageType == "error" {
+				msgStyle = msgStyle.Foreground(lipgloss.Color("#EF4444"))
+			}
+
+			messageView = msgStyle.Render(m.message)
+		}
+
+		footer := footerStyle.Width(m.width).Render("↑↓: Navigate  Enter: Select  Esc: Back")
+
+		return lipgloss.JoinVertical(lipgloss.Left, header, list, messageView, footer)
+	}
+
+	// We're editing a password
+	header := titleStyle.Render(fmt.Sprintf("Edit Password: %s", m.editingID))
+
+	formStyle := lipgloss.NewStyle().
+		Padding(1, 2)
+
+	labelStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(accentColor)
+
+	inputStyle := lipgloss.NewStyle().
+		Foreground(secondaryColor)
+
+	activeInputStyle := lipgloss.NewStyle().
+		Foreground(secondaryColor).
+		Bold(true).
+		Underline(true)
+
+	var formLines []string
+
+	// Description field
+	if m.inputField == 0 {
+		formLines = append(formLines, labelStyle.Render("Description: ")+activeInputStyle.Render(m.inputDesc+"█"))
+	} else {
+		formLines = append(formLines, labelStyle.Render("Description: ")+inputStyle.Render(m.inputDesc))
+	}
+
+	// Password field
+	masked := strings.Repeat("*", len(m.inputPwd))
+	if m.inputField == 1 {
+		formLines = append(formLines, labelStyle.Render("Password: ")+activeInputStyle.Render(masked+"█"))
+	} else {
+		formLines = append(formLines, labelStyle.Render("Password: ")+inputStyle.Render(masked))
+	}
+
+	form := formStyle.Render(strings.Join(formLines, "\n"))
+
+	// Message
+	messageView := ""
+	if m.message != "" {
+		msgStyle := lipgloss.NewStyle().
+			Padding(1, 2).
+			Bold(true)
+
+		if m.messageType == "success" {
+			msgStyle = msgStyle.Foreground(secondaryColor)
+		} else if m.messageType == "error" {
+			msgStyle = msgStyle.Foreground(lipgloss.Color("#EF4444"))
+		}
+
+		messageView = msgStyle.Render(m.message)
+	}
+
+	footer := footerStyle.Width(m.width).Render("Tab: Next Field  Enter: Save  Esc: Cancel")
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,

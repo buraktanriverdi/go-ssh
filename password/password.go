@@ -299,6 +299,20 @@ func (ps *PasswordStore) GetEntry(id string) (*PasswordEntry, error) {
 	return entry, nil
 }
 
+// Update updates an existing password entry
+func (ps *PasswordStore) Update(id, description, password string) error {
+	entry, exists := ps.entries[id]
+	if !exists {
+		return fmt.Errorf("password with ID '%s' not found", id)
+	}
+
+	// Update the fields
+	entry.Description = description
+	entry.Password = password
+
+	return nil
+}
+
 // Remove removes a password entry
 func (ps *PasswordStore) Remove(id string) error {
 	if _, exists := ps.entries[id]; !exists {
