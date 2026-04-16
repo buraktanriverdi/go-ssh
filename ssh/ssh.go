@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -420,8 +421,9 @@ func ConnectInteractive(commands []string) error {
 	filteredOutput := &TerminalFilter{Reader: ptmx}
 
 	// Create channels for output monitoring (for EXPECT command)
-	outputChan := make(chan string, 100)
+	outputChan := make(chan string, 256)
 	outputBuffer := &strings.Builder{}
+	var outputMu sync.Mutex
 
 	// Process automation commands
 	automationDone := make(chan bool)
@@ -431,9 +433,9 @@ func ConnectInteractive(commands []string) error {
 		for _, pc := range parsed[startIdx:] {
 			switch pc.Type {
 			case CommandTypeSend:
-				// Send text followed by newline
-				fmt.Fprintf(ptmx, "%s\n", pc.Value)
-				time.Sleep(100 * time.Millisecond)
+				// Send text followed by carriage return
+				fmt.Fprintf(ptmx, "%s\r", pc.Value)
+				time.Sleep(500 * time.Millisecond)
 
 			case CommandTypeSendPass:
 				// Get password from store and send it
@@ -448,9 +450,9 @@ func ConnectInteractive(commands []string) error {
 					return
 				}
 
-				// Send password followed by newline
-				fmt.Fprintf(ptmx, "%s\n", pwd)
-				time.Sleep(100 * time.Millisecond)
+				// Send password followed by carriage return
+				fmt.Fprintf(ptmx, "%s\r", pwd)
+				time.Sleep(800 * time.Millisecond)
 
 			case CommandTypeWait:
 				// Parse duration and wait with better error handling
@@ -466,7 +468,20 @@ func ConnectInteractive(commands []string) error {
 
 			case CommandTypeExpect:
 				// Wait for expected string in output
-				expectedStr := pc.Value
+				expectedStr := strings.ToLower(pc.Value)
+
+				// Clear stale buffer and channel before waiting for fresh output
+				outputMu.Lock()
+				outputBuffer.Reset()
+				outputMu.Unlock()
+				for {
+					select {
+					case <-outputChan:
+					default:
+						goto drained
+					}
+				}
+			drained:
 
 				timeout := time.After(30 * time.Second)
 				found := false
@@ -474,15 +489,21 @@ func ConnectInteractive(commands []string) error {
 				for !found {
 					select {
 					case output := <-outputChan:
-						if strings.Contains(output, expectedStr) {
+						outputMu.Lock()
+						outputBuffer.WriteString(output)
+						outputMu.Unlock()
+						if strings.Contains(strings.ToLower(output), expectedStr) {
 							found = true
 						}
 					case <-timeout:
-						fmt.Fprintf(os.Stderr, "Warning: EXPECT timeout after 30s waiting for '%s'\n", expectedStr)
+						fmt.Fprintf(os.Stderr, "Warning: EXPECT timeout after 30s waiting for '%s'\n", pc.Value)
 						found = true // Exit loop on timeout
 					case <-time.After(50 * time.Millisecond):
 						// Check accumulated buffer
-						if strings.Contains(outputBuffer.String(), expectedStr) {
+						outputMu.Lock()
+						bufStr := strings.ToLower(outputBuffer.String())
+						outputMu.Unlock()
+						if strings.Contains(bufStr, expectedStr) {
 							found = true
 						}
 					}
@@ -496,8 +517,8 @@ func ConnectInteractive(commands []string) error {
 
 			case CommandTypeExec:
 				// Execute another command
-				fmt.Fprintf(ptmx, "%s\n", pc.Value)
-				time.Sleep(100 * time.Millisecond)
+				fmt.Fprintf(ptmx, "%s\r", pc.Value)
+				time.Sleep(200 * time.Millisecond)
 			}
 		}
 
@@ -516,17 +537,19 @@ func ConnectInteractive(commands []string) error {
 				os.Stdout.Write(buf[:n])
 
 				// Send to output channel for EXPECT monitoring
+				outputMu.Lock()
+				outputBuffer.WriteString(data)
+				// Keep buffer size reasonable (last 10KB)
+				if outputBuffer.Len() > 10240 {
+					bufStr := outputBuffer.String()
+					outputBuffer.Reset()
+					outputBuffer.WriteString(bufStr[len(bufStr)-10240:])
+				}
+				outputMu.Unlock()
 				select {
 				case outputChan <- data:
-					outputBuffer.WriteString(data)
-					// Keep buffer size reasonable (last 10KB)
-					if outputBuffer.Len() > 10240 {
-						bufStr := outputBuffer.String()
-						outputBuffer.Reset()
-						outputBuffer.WriteString(bufStr[len(bufStr)-10240:])
-					}
 				default:
-					// Channel full, skip
+					// Channel full, buffer already updated above
 				}
 			}
 			if err != nil {
