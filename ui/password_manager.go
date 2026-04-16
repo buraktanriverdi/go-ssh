@@ -58,13 +58,21 @@ func (m passwordManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// This is likely a paste operation with multiple characters
 			pastedText := string(msg.Runes)
 			switch m.mode {
-			case "add", "edit":
+			case "add":
 				switch m.inputField {
 				case 0:
 					m.inputID += pastedText
 				case 1:
 					m.inputDesc += pastedText
 				case 2:
+					m.inputPwd += pastedText
+				}
+			case "edit":
+				// Edit mode has only 2 fields: Description (0) and Password (1)
+				switch m.inputField {
+				case 0:
+					m.inputDesc += pastedText
+				case 1:
 					m.inputPwd += pastedText
 				}
 			case "change-master":
