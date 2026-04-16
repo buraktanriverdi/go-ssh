@@ -424,6 +424,7 @@ func ConnectInteractive(commands []string) error {
 	outputChan := make(chan string, 256)
 	outputBuffer := &strings.Builder{}
 	var outputMu sync.Mutex
+	bufferMarkPos := 0 // Tracks buffer position for EXPECT commands
 
 	// Process automation commands
 	automationDone := make(chan bool)
@@ -436,6 +437,10 @@ func ConnectInteractive(commands []string) error {
 				// Send text followed by carriage return
 				fmt.Fprintf(ptmx, "%s\r", pc.Value)
 				time.Sleep(500 * time.Millisecond)
+				// Mark buffer position after sending
+				outputMu.Lock()
+				bufferMarkPos = outputBuffer.Len()
+				outputMu.Unlock()
 
 			case CommandTypeSendPass:
 				// Get password from store and send it
@@ -453,6 +458,10 @@ func ConnectInteractive(commands []string) error {
 				// Send password followed by carriage return
 				fmt.Fprintf(ptmx, "%s\r", pwd)
 				time.Sleep(800 * time.Millisecond)
+				// Mark buffer position after sending password
+				outputMu.Lock()
+				bufferMarkPos = outputBuffer.Len()
+				outputMu.Unlock()
 
 			case CommandTypeWait:
 				// Parse duration and wait with better error handling
@@ -470,19 +479,23 @@ func ConnectInteractive(commands []string) error {
 				// Wait for expected string in output
 				expectedStr := strings.ToLower(pc.Value)
 
-				// Clear stale buffer and channel before waiting for fresh output
+				// Check buffer from the last mark position onwards
 				outputMu.Lock()
-				outputBuffer.Reset()
-				outputMu.Unlock()
-				for {
-					select {
-					case <-outputChan:
-					default:
-						goto drained
-					}
+				fullBuffer := outputBuffer.String()
+				// Get buffer content after the last mark
+				relevantBuffer := ""
+				if bufferMarkPos < len(fullBuffer) {
+					relevantBuffer = fullBuffer[bufferMarkPos:]
 				}
-			drained:
+				outputMu.Unlock()
 
+				// First check if already in recent buffer
+				if strings.Contains(strings.ToLower(relevantBuffer), expectedStr) {
+					time.Sleep(100 * time.Millisecond) // Small delay to ensure output settles
+					break
+				}
+
+				// Not found yet, wait for new output
 				timeout := time.After(30 * time.Second)
 				found := false
 
@@ -491,21 +504,29 @@ func ConnectInteractive(commands []string) error {
 					case output := <-outputChan:
 						outputMu.Lock()
 						outputBuffer.WriteString(output)
-						outputMu.Unlock()
-						if strings.Contains(strings.ToLower(output), expectedStr) {
-							found = true
+						fullBuffer := outputBuffer.String()
+						// Check from mark position onwards
+						if bufferMarkPos < len(fullBuffer) {
+							relevantBuffer := fullBuffer[bufferMarkPos:]
+							if strings.Contains(strings.ToLower(relevantBuffer), expectedStr) {
+								found = true
+							}
 						}
+						outputMu.Unlock()
 					case <-timeout:
 						fmt.Fprintf(os.Stderr, "Warning: EXPECT timeout after 30s waiting for '%s'\n", pc.Value)
 						found = true // Exit loop on timeout
 					case <-time.After(50 * time.Millisecond):
-						// Check accumulated buffer
+						// Check accumulated buffer from mark
 						outputMu.Lock()
-						bufStr := strings.ToLower(outputBuffer.String())
-						outputMu.Unlock()
-						if strings.Contains(bufStr, expectedStr) {
-							found = true
+						fullBuffer := outputBuffer.String()
+						if bufferMarkPos < len(fullBuffer) {
+							relevantBuffer := fullBuffer[bufferMarkPos:]
+							if strings.Contains(strings.ToLower(relevantBuffer), expectedStr) {
+								found = true
+							}
 						}
+						outputMu.Unlock()
 					}
 				}
 
@@ -519,6 +540,10 @@ func ConnectInteractive(commands []string) error {
 				// Execute another command
 				fmt.Fprintf(ptmx, "%s\r", pc.Value)
 				time.Sleep(200 * time.Millisecond)
+				// Mark buffer position after executing command
+				outputMu.Lock()
+				bufferMarkPos = outputBuffer.Len()
+				outputMu.Unlock()
 			}
 		}
 
