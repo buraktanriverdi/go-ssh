@@ -358,6 +358,66 @@ categories:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Modular Configuration with conf.d
+
+For large configurations, you can split your config into multiple files using the `conf.d` directory.
+
+### How It Works
+
+All `.yaml` and `.yml` files in `~/.go-ssh/conf.d/` are automatically loaded and merged with the main config file. This allows you to organize your hosts by team, environment, or any other criteria.
+
+### Directory Structure
+
+```
+~/.go-ssh/
+├── config.yaml              # Main config (optional, can be empty)
+├── conf.d/
+│   ├── production.yaml      # Production servers
+│   ├── staging.yaml         # Staging servers
+│   ├── development.yaml     # Development servers
+│   ├── team-backend.yaml    # Backend team servers
+│   └── team-frontend.yaml   # Frontend team servers
+└── README.md                # Auto-generated documentation
+```
+
+### Example
+
+**Main config (`~/.go-ssh/config.yaml`):**
+```yaml
+# Can be empty or contain common/shared categories
+categories: []
+```
+
+**conf.d/production.yaml:**
+```yaml
+categories:
+  - name: Production
+    description: Production environment
+    hosts:
+      - name: Web Server
+        description: Production web server
+        command: ssh user@web.prod.example.com
+```
+
+**conf.d/staging.yaml:**
+```yaml
+categories:
+  - name: Staging
+    description: Staging environment
+    hosts:
+      - name: Staging Server
+        command: ssh user@staging.example.com
+```
+
+All files are automatically loaded and merged when you run `go-ssh`.
+
+### Benefits
+
+- 📁 **Organization**: Split large configs into logical units
+- 👥 **Team collaboration**: Each team can maintain their own config file
+- 🔄 **Easy updates**: Add/remove servers by adding/removing files
+- 🚀 **No code changes**: Works automatically, no setup needed
+
 ## Development
 
 To run the project:

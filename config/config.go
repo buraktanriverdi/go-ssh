@@ -59,6 +59,15 @@ func GetConfigPath() (string, error) {
 	return filepath.Join(configDir, "config.yaml"), nil
 }
 
+// GetConfDDir returns the conf.d directory path
+func GetConfDDir() (string, error) {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "conf.d"), nil
+}
+
 // EnsureConfigDir creates the config directory if it doesn't exist
 func EnsureConfigDir() error {
 	configDir, err := GetConfigDir()
@@ -66,7 +75,78 @@ func EnsureConfigDir() error {
 		return err
 	}
 
-	return os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+
+	// Also create conf.d directory
+	confDDir, err := GetConfDDir()
+	if err != nil {
+		return err
+	}
+
+	return os.MkdirAll(confDDir, 0755)
+}
+
+// LoadConfDFiles loads all YAML files from conf.d directory
+func LoadConfDFiles() ([]Config, error) {
+	confDDir, err := GetConfDDir()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if conf.d directory exists
+	if _, err := os.Stat(confDDir); os.IsNotExist(err) {
+		// conf.d doesn't exist, return empty slice
+		return []Config{}, nil
+	}
+
+	// Read all .yaml and .yml files from conf.d
+	pattern := filepath.Join(confDDir, "*.yaml")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("error reading conf.d directory: %w", err)
+	}
+
+	// Also check for .yml files
+	ymlPattern := filepath.Join(confDDir, "*.yml")
+	ymlFiles, err := filepath.Glob(ymlPattern)
+	if err != nil {
+		return nil, fmt.Errorf("error reading conf.d directory: %w", err)
+	}
+	files = append(files, ymlFiles...)
+
+	var configs []Config
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("error reading %s: %w", file, err)
+		}
+
+		var config Config
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			return nil, fmt.Errorf("error parsing %s: %w", file, err)
+		}
+
+		configs = append(configs, config)
+	}
+
+	return configs, nil
+}
+
+// MergeConfigs merges multiple configs into one
+func MergeConfigs(base *Config, additional []Config) *Config {
+	merged := &Config{
+		Categories: make([]Category, len(base.Categories)),
+	}
+	copy(merged.Categories, base.Categories)
+
+	// Append categories from additional configs
+	for _, cfg := range additional {
+		merged.Categories = append(merged.Categories, cfg.Categories...)
+	}
+
+	return merged
 }
 
 // LoadConfig loads the configuration from the YAML file
@@ -76,23 +156,42 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	var baseConfig *Config
+
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Create default config
-		return createDefaultConfig()
+		baseConfig, err = createDefaultConfig()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("error reading config file: %w", err)
+		}
+
+		var config Config
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			return nil, fmt.Errorf("error parsing config file: %w", err)
+		}
+		baseConfig = &config
 	}
 
-	data, err := os.ReadFile(configPath)
+	// Load conf.d files
+	confDConfigs, err := LoadConfDFiles()
 	if err != nil {
-		return nil, fmt.Errorf("error reading config file: %w", err)
+		// Log error but don't fail - conf.d is optional
+		fmt.Fprintf(os.Stderr, "Warning: error loading conf.d files: %v\n", err)
+		return baseConfig, nil
 	}
 
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("error parsing config file: %w", err)
+	// Merge all configs
+	if len(confDConfigs) > 0 {
+		return MergeConfigs(baseConfig, confDConfigs), nil
 	}
 
-	return &config, nil
+	return baseConfig, nil
 }
 
 // SaveConfig saves the configuration to the YAML file
